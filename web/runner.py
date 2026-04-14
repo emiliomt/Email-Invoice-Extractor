@@ -75,8 +75,14 @@ def start_run(folder: str, dry_run: bool) -> bool:
 
 
 def _run(folder: str, dry_run: bool) -> None:
+    import traceback
+
     handler = _LogCapture(_state.logs)
+    handler.setLevel(logging.DEBUG)
+
     root_logger = logging.getLogger()
+    saved_level = root_logger.level
+    root_logger.setLevel(logging.DEBUG)  # override uvicorn's level so all messages reach our handler
     root_logger.addHandler(handler)
 
     try:
@@ -84,9 +90,12 @@ def _run(folder: str, dry_run: bool) -> None:
         stats = run_extraction(folder=folder, dry_run=dry_run)
         _state.stats = stats
     except Exception as exc:
-        logging.getLogger("runner").error("Run failed with unhandled exception: %s", exc)
+        logging.getLogger("runner").error(
+            "Run failed: %s\n%s", exc, traceback.format_exc()
+        )
         _state.stats = {"errors": 1}
     finally:
         root_logger.removeHandler(handler)
+        root_logger.setLevel(saved_level)
         _state.running = False
         _state.finished_at = datetime.now(timezone.utc).isoformat()
