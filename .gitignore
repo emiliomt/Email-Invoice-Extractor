@@ -1,0 +1,11 @@
+.env
+*.pyc
+__pycache__/
+processed_emails.json
+processed_emails.tmp
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+*.py[cod]
