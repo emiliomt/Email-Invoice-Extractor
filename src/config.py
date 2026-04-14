@@ -18,6 +18,9 @@ class Settings(BaseSettings):
 
     # App behaviour
     state_file_path: str = Field("./processed_emails.json")
+    # Optional: store state in S3 instead of local disk (required on stateless hosts
+    # like Render free tier).  Set to an S3 key, e.g. "state/processed_emails.json"
+    state_s3_key: str = Field("")
     log_level: str = Field("INFO")
 
     model_config = SettingsConfigDict(

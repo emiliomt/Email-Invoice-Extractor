@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: invoice-extractor
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn web.app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      # Neo.com IMAP
+      - key: IMAP_HOST
+        value: imap.neo.space
+      - key: IMAP_PORT
+        value: 993
+      - key: IMAP_USERNAME
+        sync: false   # set in Render dashboard
+      - key: IMAP_PASSWORD
+        sync: false
+      # AWS S3
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_REGION
+        value: us-east-1
+      - key: S3_BUCKET_NAME
+        sync: false
+      - key: S3_KEY_PREFIX
+        value: invoices/
+      # Store processed-ID state in S3 so it survives re-deploys
+      # Set to an S3 key, e.g.  state/processed_emails.json
+      - key: STATE_S3_KEY
+        value: state/processed_emails.json
+      - key: LOG_LEVEL
+        value: INFO

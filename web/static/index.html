@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Invoice PDF Extractor</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+           background: #f1f5f9; color: #1e293b; min-height: 100vh; }
+    .container { max-width: 960px; margin: 0 auto; padding: 32px 16px; }
+    h1 { font-size: 1.4rem; font-weight: 700; margin-bottom: 24px; letter-spacing: -0.02em; }
+
+    /* Card */
+    .card { background: #fff; border-radius: 10px; padding: 20px 24px;
+            margin-bottom: 20px; box-shadow: 0 1px 4px rgba(0,0,0,.07); }
+    .card-title { font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+                  letter-spacing: .08em; color: #94a3b8; margin-bottom: 16px; }
+
+    /* Controls */
+    .controls { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+    .field { display: flex; flex-direction: column; gap: 5px; }
+    .field label { font-size: 0.8rem; color: #64748b; font-weight: 500; }
+    input[type="text"] { padding: 7px 11px; border: 1px solid #cbd5e1; border-radius: 6px;
+                         font-size: 0.875rem; width: 160px; outline: none; }
+    input[type="text"]:focus { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,.15); }
+    .checkbox-row { display: flex; align-items: center; gap: 7px; padding-bottom: 1px;
+                    font-size: 0.875rem; cursor: pointer; color: #475569; }
+    input[type="checkbox"] { width: 15px; height: 15px; cursor: pointer; accent-color: #6366f1; }
+    .btn { padding: 8px 20px; border: none; border-radius: 6px; font-size: 0.875rem;
+           font-weight: 600; cursor: pointer; transition: background .15s; }
+    .btn-primary { background: #6366f1; color: #fff; }
+    .btn-primary:hover { background: #4f46e5; }
+    .btn-primary:disabled { background: #a5b4fc; cursor: not-allowed; }
+    .btn-sm { padding: 5px 12px; font-size: 0.78rem; background: #f1f5f9; color: #475569;
+              border: 1px solid #e2e8f0; }
+    .btn-sm:hover { background: #e2e8f0; }
+
+    /* Status badge */
+    .status-row { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+    .badge { display: inline-flex; align-items: center; gap: 6px;
+             padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 700; }
+    .badge::before { content: ''; width: 7px; height: 7px; border-radius: 50%; }
+    .badge.idle  { background: #dcfce7; color: #166534; }
+    .badge.idle::before { background: #22c55e; }
+    .badge.running { background: #fef9c3; color: #713f12; }
+    .badge.running::before { background: #eab308; animation: pulse 1s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    .run-time { font-size: 0.8rem; color: #94a3b8; }
+
+    /* Stats grid */
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 10px; }
+    .stat { background: #f8fafc; border-radius: 8px; padding: 12px; text-align: center; }
+    .stat-value { font-size: 1.75rem; font-weight: 800; color: #6366f1; line-height: 1; }
+    .stat-value.warn { color: #f59e0b; }
+    .stat-value.danger { color: #ef4444; }
+    .stat-label { font-size: 0.7rem; color: #94a3b8; margin-top: 4px; text-transform: uppercase;
+                  letter-spacing: .05em; }
+
+    /* Log viewer */
+    #log-output { background: #0f172a; color: #94a3b8; font-family: 'Courier New', Consolas, monospace;
+                  font-size: 0.775rem; line-height: 1.5; padding: 14px 16px; border-radius: 7px;
+                  height: 320px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+    .log-DEBUG   { color: #475569; }
+    .log-INFO    { color: #86efac; }
+    .log-WARNING { color: #fde68a; }
+    .log-ERROR   { color: #fca5a5; }
+
+    /* Batch table */
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    th { text-align: left; padding: 8px 12px; border-bottom: 2px solid #f1f5f9;
+         font-size: 0.72rem; color: #94a3b8; text-transform: uppercase; letter-spacing: .05em; }
+    td { padding: 9px 12px; border-bottom: 1px solid #f8fafc; }
+    tr:last-child td { border-bottom: none; }
+    .key-cell { font-family: monospace; font-size: 0.78rem; color: #64748b; word-break: break-all; }
+    .empty-msg { text-align: center; color: #94a3b8; padding: 28px; font-size: 0.875rem; }
+
+    .row-between { display: flex; justify-content: space-between; align-items: center; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>Invoice PDF Extractor</h1>
+
+  <!-- Run controls -->
+  <div class="card">
+    <div class="card-title">Extract &amp; Upload</div>
+    <div class="status-row">
+      <span class="badge idle" id="status-badge">Idle</span>
+      <span class="run-time" id="run-time"></span>
+    </div>
+    <div class="controls">
+      <div class="field">
+        <label for="folder-input">IMAP Folder</label>
+        <input type="text" id="folder-input" value="INBOX">
+      </div>
+      <div class="field">
+        <label>Options</label>
+        <label class="checkbox-row">
+          <input type="checkbox" id="dry-run-check">
+          Dry run (no upload, no state changes)
+        </label>
+      </div>
+      <div class="field">
+        <label>&nbsp;</label>
+        <button class="btn btn-primary" id="run-btn" onclick="startRun()">Run Now</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stats (shown after a run completes) -->
+  <div class="card" id="stats-card" style="display:none">
+    <div class="card-title">Last Run Results</div>
+    <div class="stats-grid" id="stats-grid"></div>
+  </div>
+
+  <!-- Live log -->
+  <div class="card">
+    <div class="card-title">Log Output</div>
+    <div id="log-output"><span class="log-INFO">Waiting for a run…</span></div>
+  </div>
+
+  <!-- Uploaded batches -->
+  <div class="card">
+    <div class="row-between card-title" style="margin-bottom:14px">
+      <span>Uploaded Batches</span>
+      <button class="btn btn-sm" onclick="loadBatches()">Refresh</button>
+    </div>
+    <div id="batch-list" class="table-wrap"><div class="empty-msg">Loading…</div></div>
+  </div>
+</div>
+
+<script>
+  let nextLogIndex = 0;
+  let polling = false;
+
+  // ── Run ────────────────────────────────────────────────────────────────
+  async function startRun() {
+    const folder  = document.getElementById('folder-input').value.trim() || 'INBOX';
+    const dry_run = document.getElementById('dry-run-check').checked;
+
+    const res = await fetch('/run', {
+      method:  'POST',
+      headers: {'Content-Type': 'application/json'},
+      body:    JSON.stringify({folder, dry_run}),
+    });
+
+    if (res.status === 409) { alert('A run is already in progress.'); return; }
+    if (!res.ok)            { alert('Failed to start run: ' + res.statusText); return; }
+
+    nextLogIndex = 0;
+    document.getElementById('log-output').innerHTML = '';
+    document.getElementById('stats-card').style.display = 'none';
+    setRunning(true);
+    if (!polling) { polling = true; poll(); }
+  }
+
+  function setRunning(running) {
+    const badge = document.getElementById('status-badge');
+    const btn   = document.getElementById('run-btn');
+    badge.textContent = running ? 'Running…' : 'Idle';
+    badge.className   = 'badge ' + (running ? 'running' : 'idle');
+    btn.disabled      = running;
+  }
+
+  // ── Polling loop ───────────────────────────────────────────────────────
+  async function poll() {
+    try {
+      // Fetch new log lines
+      const lr = await fetch('/logs?since=' + nextLogIndex);
+      if (lr.ok) {
+        const {logs, total} = await lr.json();
+        nextLogIndex = total;
+        appendLogs(logs);
+      }
+
+      // Check run status
+      const sr = await fetch('/status');
+      if (sr.ok) {
+        const status = await sr.json();
+
+        if (status.started_at) {
+          const to      = status.finished_at || new Date().toISOString();
+          const elapsed = elapsedStr(status.started_at, to);
+          document.getElementById('run-time').textContent =
+            status.running ? `Running for ${elapsed}` : `Finished in ${elapsed}`;
+        }
+
+        if (status.running) {
+          setTimeout(poll, 1000);
+          return;
+        }
+
+        // Run finished
+        polling = false;
+        setRunning(false);
+        if (status.stats && Object.keys(status.stats).length) showStats(status.stats);
+        loadBatches();
+        return;
+      }
+    } catch (e) {
+      console.error('poll error', e);
+    }
+    setTimeout(poll, 2000);
+  }
+
+  // Restore in-progress run on page load
+  (async () => {
+    try {
+      const sr = await fetch('/status');
+      if (!sr.ok) return;
+      const status = await sr.json();
+      if (status.running) { setRunning(true); polling = true; poll(); }
+      else if (status.stats && Object.keys(status.stats).length) showStats(status.stats);
+    } catch (_) {}
+  })();
+
+  // ── Helpers ────────────────────────────────────────────────────────────
+  function elapsedStr(from, to) {
+    const s = Math.round((new Date(to) - new Date(from)) / 1000);
+    return s < 60 ? `${s}s` : `${Math.floor(s/60)}m ${s%60}s`;
+  }
+
+  function appendLogs(logs) {
+    const el = document.getElementById('log-output');
+    for (const entry of logs) {
+      const span = document.createElement('span');
+      span.className   = 'log-' + entry.level;
+      span.textContent = entry.msg + '\n';
+      el.appendChild(span);
+    }
+    el.scrollTop = el.scrollHeight;
+  }
+
+  function showStats(stats) {
+    const defs = [
+      {key:'seen',     label:'Seen'},
+      {key:'skipped',  label:'Skipped'},
+      {key:'queued',   label:'PDFs Queued'},
+      {key:'batches',  label:'Batches'},
+      {key:'uploaded', label:'Uploaded'},
+      {key:'errors',   label:'Errors'},
+    ];
+    document.getElementById('stats-grid').innerHTML = defs.map(({key, label}) => {
+      const val = stats[key] ?? 0;
+      const cls = key === 'errors' && val > 0 ? 'danger'
+                : key === 'skipped'            ? 'warn' : '';
+      return `<div class="stat">
+        <div class="stat-value ${cls}">${val}</div>
+        <div class="stat-label">${label}</div>
+      </div>`;
+    }).join('');
+    document.getElementById('stats-card').style.display = 'block';
+  }
+
+  async function loadBatches() {
+    const el = document.getElementById('batch-list');
+    try {
+      const res = await fetch('/batches');
+      if (!res.ok) throw new Error(res.statusText);
+      const {batches} = await res.json();
+      if (!batches.length) {
+        el.innerHTML = '<div class="empty-msg">No batches uploaded yet.</div>';
+        return;
+      }
+      el.innerHTML = `<table>
+        <thead><tr><th>S3 Key</th><th>PDFs (est.)</th><th>Size</th><th>Uploaded</th></tr></thead>
+        <tbody>${batches.map(b => `<tr>
+          <td class="key-cell">${b.key}</td>
+          <td>—</td>
+          <td>${fmtSize(b.size)}</td>
+          <td>${new Date(b.last_modified).toLocaleString()}</td>
+        </tr>`).join('')}</tbody>
+      </table>`;
+    } catch (e) {
+      el.innerHTML = '<div class="empty-msg">Could not load batches.</div>';
+    }
+  }
+
+  function fmtSize(bytes) {
+    if (bytes < 1024)    return bytes + ' B';
+    if (bytes < 1048576) return (bytes/1024).toFixed(1) + ' KB';
+    return (bytes/1048576).toFixed(1) + ' MB';
+  }
+
+  loadBatches();
+</script>
+</body>
+</html>
