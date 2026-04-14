@@ -106,6 +106,10 @@
         <label>&nbsp;</label>
         <button class="btn btn-primary" id="run-btn" onclick="startRun()">Run Now</button>
       </div>
+      <div class="field">
+        <label>&nbsp;</label>
+        <button class="btn btn-sm" style="color:#dc2626;border-color:#fca5a5" onclick="resetState()">Reset State</button>
+      </div>
     </div>
   </div>
 
@@ -226,6 +230,18 @@
   })();
 
   // ── Helpers ────────────────────────────────────────────────────────────
+  async function resetState() {
+    if (!confirm('Clear all processed-email state? The next run will reprocess all emails.')) return;
+    const res = await fetch('/state', {method: 'DELETE'});
+    if (res.ok) {
+      document.getElementById('stats-card').style.display = 'none';
+      const el = document.getElementById('log-output');
+      el.innerHTML = '<span class="log-INFO">State reset — next run will reprocess all emails.</span>';
+    } else {
+      alert('Failed to reset state.');
+    }
+  }
+
   function copyLogs() {
     const text = document.getElementById('log-output').innerText;
     navigator.clipboard.writeText(text).then(() => {

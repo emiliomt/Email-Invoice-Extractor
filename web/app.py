@@ -51,6 +51,28 @@ async def logs(since: int = 0):
     return runner.get_state().snapshot_logs(since)
 
 
+@app.delete("/state")
+async def reset_state():
+    if settings.state_s3_key:
+        client = boto3.client(
+            "s3",
+            region_name=settings.aws_region,
+            aws_access_key_id=settings.aws_access_key_id,
+            aws_secret_access_key=settings.aws_secret_access_key,
+            endpoint_url=settings.aws_endpoint_url or None,
+        )
+        try:
+            client.delete_object(Bucket=settings.s3_bucket_name, Key=settings.state_s3_key)
+        except Exception:
+            pass
+    else:
+        import pathlib
+        p = pathlib.Path(settings.state_file_path)
+        if p.exists():
+            p.unlink()
+    return {"reset": True}
+
+
 @app.get("/batches")
 async def list_batches():
     client = boto3.client(

@@ -51,15 +51,19 @@ def extract_pdf_attachments(msg: Message) -> List[PDFAttachment]:
     return attachments
 
 
+_KNOWN_PDF_TYPES = {"application/pdf", "application/x-pdf"}
+
+
 def _is_pdf_part(part: Message) -> bool:
     content_type = part.get_content_type().lower()
-    if content_type == "application/pdf":
+    # Explicit PDF content types
+    if content_type in _KNOWN_PDF_TYPES:
         return True
-    # Some mailers send PDFs as application/octet-stream
-    if content_type == "application/octet-stream":
-        filename = _decode_filename(part)
-        if filename and filename.lower().endswith(".pdf"):
-            return True
+    # Any other content type — trust the filename extension.
+    # The %PDF magic byte check in _build_attachment() is the real guard.
+    filename = _decode_filename(part)
+    if filename and filename.lower().endswith(".pdf"):
+        return True
     return False
 
 
