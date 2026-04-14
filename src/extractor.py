@@ -26,6 +26,7 @@ def run_extraction(folder: str = "INBOX", dry_run: bool = False) -> Dict[str, in
     pdf_queue = []          # list of (PDFAttachment, message_id)
     message_pdf_counts = {} # message_id -> number of PDFs queued from that message
     stats = {"seen": 0, "skipped": 0, "queued": 0, "batches": 0, "uploaded": 0, "errors": 0}
+    _no_pdf_samples_logged = 0   # log MIME structure for first 20 no-PDF emails
 
     # ------------------------------------------------------------------ #
     # Phase 1: collect PDFs from all unprocessed emails                   #
@@ -45,7 +46,24 @@ def run_extraction(folder: str = "INBOX", dry_run: bool = False) -> Dict[str, in
                 attachments = extract_pdf_attachments(msg)
 
                 if not attachments:
-                    logger.debug("No PDF attachments in %s", message_id)
+                    if _no_pdf_samples_logged < 20:
+                        _no_pdf_samples_logged += 1
+                        # Log MIME structure so we can diagnose why PDFs are missed.
+                        # extract_pdf_attachments already built the summary; re-fetch via
+                        # a lightweight walk here to avoid a second decode pass.
+                        parts_info = []
+                        for p in msg.walk():
+                            if p.get_content_maintype() == "multipart":
+                                continue
+                            fn = p.get_filename() or "-"
+                            parts_info.append(f"{p.get_content_type()}[fn={fn}]")
+                        logger.info(
+                            "DIAG no-pdf #%d uid=%d parts: %s",
+                            _no_pdf_samples_logged, uid,
+                            " | ".join(parts_info) or "(empty)",
+                        )
+                    else:
+                        logger.debug("No PDF attachments in %s", message_id)
                     if not dry_run:
                         tracker.mark_processed(message_id)
                     continue

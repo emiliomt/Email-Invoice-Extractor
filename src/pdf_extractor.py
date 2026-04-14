@@ -38,52 +38,70 @@ def extract_pdf_attachments(msg: Message) -> List[PDFAttachment]:
     no filename at all.  The magic-bytes check is the authoritative guard.
     """
     attachments: List[PDFAttachment] = []
+    part_summaries: List[str] = []
 
     for part in msg.walk():
-        if part.get_content_maintype() in _SKIP_MAINTYPE:
+        ct = part.get_content_type()
+        maintype = part.get_content_maintype()
+
+        if maintype == "multipart":
             continue
 
-        att = _try_extract_pdf(part)
+        if maintype in _SKIP_MAINTYPE:
+            part_summaries.append(ct)
+            continue
+
+        att = _try_extract_pdf(part, part_summaries)
         if att:
             attachments.append(att)
-            logger.debug(
-                "Found PDF: %s (%d bytes) [content-type=%s]",
-                att.filename,
-                att.size_bytes,
-                att.content_type,
-            )
+
+    if not attachments and logger.isEnabledFor(logging.DEBUG):
+        logger.debug("No PDFs found — MIME parts: %s", " | ".join(part_summaries) or "(none)")
 
     return attachments
 
 
-def _try_extract_pdf(part: Message) -> "PDFAttachment | None":
+def _try_extract_pdf(
+    part: Message,
+    summaries: List[str],
+) -> "PDFAttachment | None":
     """
     Attempt to extract a PDF from a single MIME part.
+    Appends a human-readable summary entry to `summaries` for diagnostics.
     Returns a PDFAttachment on success, or None if the part is not a PDF.
     """
     content_type = part.get_content_type().lower()
     filename = _decode_filename(part)
+    encoding = part.get("Content-Transfer-Encoding", "-")
 
     # Decode transfer encoding (base64, quoted-printable, …)
     payload = part.get_payload(decode=True)
     if not payload:
+        summaries.append(f"{content_type}[fn={filename or '-'},enc={encoding},EMPTY]")
         return None
 
-    # Magic bytes check: %PDF must appear within the first 1024 bytes.
-    if _PDF_MAGIC not in payload[:_PDF_MAGIC_WINDOW]:
-        # Only log a warning when the part was explicitly labelled as a PDF,
-        # to avoid flooding the log for every non-PDF binary attachment.
+    first_hex = payload[:8].hex()
+    has_magic = _PDF_MAGIC in payload[:_PDF_MAGIC_WINDOW]
+
+    summaries.append(
+        f"{content_type}[fn={filename or '-'},enc={encoding},"
+        f"sz={len(payload)},magic={'YES' if has_magic else first_hex}]"
+    )
+
+    if not has_magic:
         if "pdf" in content_type or (filename and filename.lower().endswith(".pdf")):
             logger.warning(
                 "Part declared as PDF but %%PDF magic not found in first %d bytes "
-                "(content_type=%s, size=%d) — skipping",
-                _PDF_MAGIC_WINDOW,
-                content_type,
-                len(payload),
+                "(content_type=%s, size=%d, first_bytes=%s) — skipping",
+                _PDF_MAGIC_WINDOW, content_type, len(payload), first_hex,
             )
         return None
 
     effective_filename = filename or "attachment.pdf"
+    logger.debug(
+        "Found PDF: %s (%d bytes) [content-type=%s]",
+        effective_filename, len(payload), content_type,
+    )
     return PDFAttachment(
         filename=effective_filename,
         content=payload,
