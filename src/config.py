@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     s3_bucket_name: str
     s3_key_prefix: str = Field("invoices/")
 
+    # Optional custom S3 endpoint (e.g. Cloudflare R2)
+    aws_endpoint_url: str = Field("")
+
     # App behaviour
     state_file_path: str = Field("./processed_emails.json")
     # Optional: store state in S3 instead of local disk (required on stateless hosts

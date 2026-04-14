@@ -36,6 +36,7 @@ class S3Uploader:
             region_name=settings.aws_region,
             aws_access_key_id=settings.aws_access_key_id,
             aws_secret_access_key=settings.aws_secret_access_key,
+            endpoint_url=settings.aws_endpoint_url or None,
         )
         self.bucket = settings.s3_bucket_name
         self.prefix = settings.s3_key_prefix.rstrip("/")

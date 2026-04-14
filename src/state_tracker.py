@@ -124,6 +124,7 @@ def create_tracker(settings: "Settings") -> Union[StateTracker, S3StateTracker]:
             region_name=settings.aws_region,
             aws_access_key_id=settings.aws_access_key_id,
             aws_secret_access_key=settings.aws_secret_access_key,
+            endpoint_url=settings.aws_endpoint_url or None,
         )
         return S3StateTracker(settings.s3_bucket_name, settings.state_s3_key, client)
     return StateTracker(settings.state_file_path)

@@ -58,6 +58,7 @@ async def list_batches():
         region_name=settings.aws_region,
         aws_access_key_id=settings.aws_access_key_id,
         aws_secret_access_key=settings.aws_secret_access_key,
+        endpoint_url=settings.aws_endpoint_url or None,
     )
     prefix = settings.s3_key_prefix.rstrip("/") + "/"
     paginator = client.get_paginator("list_objects_v2")
