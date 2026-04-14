@@ -117,7 +117,10 @@
 
   <!-- Live log -->
   <div class="card">
-    <div class="card-title">Log Output</div>
+    <div class="row-between" style="margin-bottom:10px">
+      <span class="card-title" style="margin-bottom:0">Log Output</span>
+      <button class="btn btn-sm" onclick="copyLogs()">Copy Logs</button>
+    </div>
     <div id="log-output"><span class="log-INFO">Waiting for a run…</span></div>
   </div>
 
@@ -223,6 +226,15 @@
   })();
 
   // ── Helpers ────────────────────────────────────────────────────────────
+  function copyLogs() {
+    const text = document.getElementById('log-output').innerText;
+    navigator.clipboard.writeText(text).then(() => {
+      const btn = event.target;
+      btn.textContent = 'Copied!';
+      setTimeout(() => { btn.textContent = 'Copy Logs'; }, 2000);
+    });
+  }
+
   function elapsedStr(from, to) {
     const s = Math.round((new Date(to) - new Date(from)) / 1000);
     return s < 60 ? `${s}s` : `${Math.floor(s/60)}m ${s%60}s`;
