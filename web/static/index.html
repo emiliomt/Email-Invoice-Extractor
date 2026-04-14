@@ -192,7 +192,13 @@
           return;
         }
 
-        // Run finished
+        // Run finished — do one final log fetch to catch lines logged just before completion
+        const finalLr = await fetch('/logs?since=' + nextLogIndex);
+        if (finalLr.ok) {
+          const {logs, total} = await finalLr.json();
+          nextLogIndex = total;
+          appendLogs(logs);
+        }
         polling = false;
         setRunning(false);
         if (status.stats && Object.keys(status.stats).length) showStats(status.stats);

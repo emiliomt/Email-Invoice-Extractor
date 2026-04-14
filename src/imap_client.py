@@ -34,6 +34,7 @@ class IMAPEmailClient:
             port=settings.imap_port,
             ssl=True,
             use_uid=True,
+            timeout=30,
         )
         self._client.login(settings.imap_username, settings.imap_password)
         logger.info("IMAP login successful")
