@@ -9,11 +9,10 @@ from typing import List
 logger = logging.getLogger(__name__)
 
 _PDF_MAGIC = b"%PDF"
-# The PDF spec allows the %PDF header within the first 1024 bytes.
 _PDF_MAGIC_WINDOW = 1024
 
-# These MIME main-types can never produce a valid PDF or ZIP payload.
-_SKIP_MAINTYPE = frozenset({"text", "image", "audio", "video", "multipart", "message"})
+# MIME main-types that can never produce a valid file attachment.
+_SKIP_MAINTYPE = frozenset({"image", "audio", "video", "multipart", "message"})
 
 # Content-types that are definitively ZIPs (regardless of filename).
 _ZIP_TYPES = frozenset({
@@ -23,34 +22,57 @@ _ZIP_TYPES = frozenset({
     "application/x-compressed",
 })
 
+# Content-types that are definitively XML.
+_XML_CONTENT_TYPES = frozenset({
+    "text/xml",
+    "application/xml",
+    "application/x-xml",
+})
+
 
 @dataclass
-class PDFAttachment:
+class Attachment:
     filename: str
     content: bytes
     content_type: str
     size_bytes: int
 
 
-def extract_pdf_attachments(msg: Message) -> List[PDFAttachment]:
+# Backward-compat alias used by s3_uploader and any external callers.
+PDFAttachment = Attachment
+
+
+def extract_attachments(msg: Message, file_type: str = "pdf") -> List[Attachment]:
     """
-    Walk all MIME parts of an email and return any PDF attachments found.
+    Walk all MIME parts of an email and return attachments of the requested type.
+
+    file_type:
+      "pdf"  – return only PDF attachments (validated by %PDF magic bytes)
+      "xml"  – return only XML attachments (detected by content-type or .xml extension)
+      "both" – return both PDF and XML attachments
 
     Handles:
-    - Direct PDF attachments (any Content-Type; validated by %PDF magic bytes).
-    - ZIP attachments: opened in memory; all .pdf members extracted.
-    - Nested ZIPs inside ZIPs (one level deep is enough for invoice emails).
+    - Direct attachments (any Content-Type; PDFs validated by magic bytes).
+    - ZIP attachments: opened in memory; relevant members extracted.
+    - Nested ZIPs inside ZIPs (one level deep).
     """
-    attachments: List[PDFAttachment] = []
+    want_pdf = file_type in ("pdf", "both")
+    want_xml = file_type in ("xml", "both")
+
+    attachments: List[Attachment] = []
     part_summaries: List[str] = []
 
     for part in msg.walk():
         maintype = part.get_content_maintype()
-        if maintype in _SKIP_MAINTYPE:
-            continue
-
         ct = part.get_content_type().lower()
         filename = _decode_filename(part)
+
+        if maintype in _SKIP_MAINTYPE:
+            continue
+        # Skip text/* unless it's an XML type we actually want.
+        if maintype == "text":
+            if not (want_xml and _is_xml_type(ct, filename)):
+                continue
 
         payload = part.get_payload(decode=True)
         if not payload:
@@ -58,24 +80,38 @@ def extract_pdf_attachments(msg: Message) -> List[PDFAttachment]:
             continue
 
         if _is_zip(ct, filename):
-            zipped = _extract_pdfs_from_zip(payload, filename or "attachment.zip")
-            attachments.extend(zipped)
+            extracted = _extract_from_zip(payload, filename or "attachment.zip", want_pdf, want_xml)
+            attachments.extend(extracted)
             part_summaries.append(
                 f"{ct}[fn={filename or '-'},sz={len(payload)}"
-                f",zip→{len(zipped)} PDF(s)]"
+                f",zip→{len(extracted)} file(s)]"
             )
         else:
-            att = _try_pdf_by_magic(payload, ct, filename, part_summaries)
-            if att:
+            is_xml = _is_xml_type(ct, filename)
+
+            if want_pdf and not is_xml:
+                att = _try_pdf_by_magic(payload, ct, filename, part_summaries)
+                if att:
+                    attachments.append(att)
+
+            if want_xml and is_xml:
+                att = _make_xml_attachment(payload, ct, filename)
                 attachments.append(att)
+                part_summaries.append(f"{ct}[fn={filename or '-'},sz={len(payload)},XML]")
 
     if not attachments and logger.isEnabledFor(logging.DEBUG):
         logger.debug(
-            "No PDFs found — MIME parts: %s",
+            "No %s found — MIME parts: %s",
+            file_type.upper() + "s",
             " | ".join(part_summaries) or "(none)",
         )
 
     return attachments
+
+
+def extract_pdf_attachments(msg: Message) -> List[Attachment]:
+    """Backward-compat wrapper — extracts PDF attachments only."""
+    return extract_attachments(msg, file_type="pdf")
 
 
 # ------------------------------------------------------------------ #
@@ -87,51 +123,65 @@ def _is_zip(content_type: str, filename: str) -> bool:
         return True
     if filename and filename.lower().endswith(".zip"):
         return True
-    # application/octet-stream with no filename: peek at magic bytes is
-    # handled in the caller after payload is decoded.
     return False
 
 
-def _extract_pdfs_from_zip(
-    zip_bytes: bytes, zip_filename: str
-) -> List[PDFAttachment]:
-    """Open a ZIP in memory and return all PDF members found inside."""
-    results: List[PDFAttachment] = []
+def _is_xml_type(content_type: str, filename: str) -> bool:
+    if content_type in _XML_CONTENT_TYPES:
+        return True
+    if filename and filename.lower().endswith(".xml"):
+        return True
+    return False
+
+
+def _extract_from_zip(
+    zip_bytes: bytes, zip_filename: str, want_pdf: bool, want_xml: bool
+) -> List[Attachment]:
+    """Open a ZIP in memory and return requested file types found inside."""
+    results: List[Attachment] = []
     try:
         with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
             for member in zf.infolist():
                 name = member.filename
-                if not name.lower().endswith(".pdf"):
+                name_lower = name.lower()
+                is_pdf_member = name_lower.endswith(".pdf")
+                is_xml_member = name_lower.endswith(".xml")
+
+                if not ((want_pdf and is_pdf_member) or (want_xml and is_xml_member)):
                     continue
+
                 try:
-                    pdf_bytes = zf.read(member)
+                    file_bytes = zf.read(member)
                 except Exception as exc:
-                    logger.warning(
-                        "Could not read %s from ZIP %s: %s", name, zip_filename, exc
-                    )
+                    logger.warning("Could not read %s from ZIP %s: %s", name, zip_filename, exc)
                     continue
 
-                if _PDF_MAGIC not in pdf_bytes[:_PDF_MAGIC_WINDOW]:
-                    logger.warning(
-                        "Member %s in ZIP %s has .pdf extension but no %%PDF magic — skipping",
-                        name, zip_filename,
-                    )
-                    continue
+                base = name.replace("\\", "/").rsplit("/", 1)[-1] or "attachment"
 
-                # Strip directory component; keep just the base filename.
-                base = name.replace("\\", "/").rsplit("/", 1)[-1] or "attachment.pdf"
-                results.append(
-                    PDFAttachment(
+                if is_pdf_member and want_pdf:
+                    if _PDF_MAGIC not in file_bytes[:_PDF_MAGIC_WINDOW]:
+                        logger.warning(
+                            "Member %s in ZIP %s has .pdf extension but no %%PDF magic — skipping",
+                            name, zip_filename,
+                        )
+                        continue
+                    results.append(Attachment(
                         filename=base,
-                        content=pdf_bytes,
+                        content=file_bytes,
                         content_type="application/pdf",
-                        size_bytes=len(pdf_bytes),
-                    )
-                )
-                logger.debug(
-                    "Extracted PDF %s (%d bytes) from ZIP %s",
-                    base, len(pdf_bytes), zip_filename,
-                )
+                        size_bytes=len(file_bytes),
+                    ))
+                    logger.debug("Extracted PDF %s (%d bytes) from ZIP %s", base, len(file_bytes), zip_filename)
+
+                elif is_xml_member and want_xml:
+                    results.append(Attachment(
+                        filename=base,
+                        content=file_bytes,
+                        content_type="application/xml",
+                        size_bytes=len(file_bytes),
+                    ))
+                    logger.debug("Extracted XML %s (%d bytes) from ZIP %s", base, len(file_bytes), zip_filename)
+
     except zipfile.BadZipFile:
         logger.warning("Part is not a valid ZIP file: %s", zip_filename)
     except Exception as exc:
@@ -139,12 +189,23 @@ def _extract_pdfs_from_zip(
     return results
 
 
+def _make_xml_attachment(payload: bytes, content_type: str, filename: str) -> Attachment:
+    effective_filename = filename or "attachment.xml"
+    logger.debug("Found XML: %s (%d bytes) [content-type=%s]", effective_filename, len(payload), content_type)
+    return Attachment(
+        filename=effective_filename,
+        content=payload,
+        content_type=content_type,
+        size_bytes=len(payload),
+    )
+
+
 def _try_pdf_by_magic(
     payload: bytes,
     content_type: str,
     filename: str,
     summaries: List[str],
-) -> "PDFAttachment | None":
+) -> "Attachment | None":
     """Accept a MIME payload as a PDF iff it contains the %PDF magic bytes."""
     has_magic = _PDF_MAGIC in payload[:_PDF_MAGIC_WINDOW]
     first_hex = payload[:8].hex()
@@ -166,7 +227,7 @@ def _try_pdf_by_magic(
         "Found PDF: %s (%d bytes) [content-type=%s]",
         effective_filename, len(payload), content_type,
     )
-    return PDFAttachment(
+    return Attachment(
         filename=effective_filename,
         content=payload,
         content_type=content_type,

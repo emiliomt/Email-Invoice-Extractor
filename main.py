@@ -43,6 +43,9 @@ def parse_args() -> argparse.Namespace:
                         help="List all IMAP folders and exit")
     parser.add_argument("--reset-state", action="store_true",
                         help="Delete the state file to reprocess all emails")
+    parser.add_argument("--file-type", default=settings.file_type,
+                        choices=["pdf", "xml", "both"],
+                        help="Attachment type to extract: pdf, xml, or both (default: pdf)")
     parser.add_argument("--log-level", default=settings.log_level,
                         choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     return parser.parse_args()
@@ -70,7 +73,7 @@ def main() -> int:
         return 0
 
     from src.extractor import run_extraction
-    stats = run_extraction(folder=args.folder, dry_run=args.dry_run)
+    stats = run_extraction(folder=args.folder, dry_run=args.dry_run, file_type=args.file_type)
     return 0 if stats["errors"] == 0 else 1
 
 

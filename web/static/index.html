@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Invoice PDF Extractor</title>
+  <title>Invoice Extractor</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -24,6 +24,9 @@
     input[type="text"] { padding: 7px 11px; border: 1px solid #cbd5e1; border-radius: 6px;
                          font-size: 0.875rem; width: 160px; outline: none; }
     input[type="text"]:focus { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,.15); }
+    select { padding: 7px 11px; border: 1px solid #cbd5e1; border-radius: 6px;
+             font-size: 0.875rem; outline: none; background: #fff; cursor: pointer; }
+    select:focus { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,.15); }
     .checkbox-row { display: flex; align-items: center; gap: 7px; padding-bottom: 1px;
                     font-size: 0.875rem; cursor: pointer; color: #475569; }
     input[type="checkbox"] { width: 15px; height: 15px; cursor: pointer; accent-color: #6366f1; }
@@ -81,7 +84,7 @@
 </head>
 <body>
 <div class="container">
-  <h1>Invoice PDF Extractor</h1>
+  <h1>Invoice Extractor</h1>
 
   <!-- Run controls -->
   <div class="card">
@@ -94,6 +97,14 @@
       <div class="field">
         <label for="folder-input">IMAP Folder</label>
         <input type="text" id="folder-input" value="INBOX">
+      </div>
+      <div class="field">
+        <label for="file-type-select">File Type</label>
+        <select id="file-type-select">
+          <option value="pdf">PDF only</option>
+          <option value="xml">XML only</option>
+          <option value="both">PDF + XML</option>
+        </select>
       </div>
       <div class="field">
         <label>Options</label>
@@ -144,13 +155,14 @@
 
   // ── Run ────────────────────────────────────────────────────────────────
   async function startRun() {
-    const folder  = document.getElementById('folder-input').value.trim() || 'INBOX';
-    const dry_run = document.getElementById('dry-run-check').checked;
+    const folder    = document.getElementById('folder-input').value.trim() || 'INBOX';
+    const dry_run   = document.getElementById('dry-run-check').checked;
+    const file_type = document.getElementById('file-type-select').value;
 
     const res = await fetch('/run', {
       method:  'POST',
       headers: {'Content-Type': 'application/json'},
-      body:    JSON.stringify({folder, dry_run}),
+      body:    JSON.stringify({folder, dry_run, file_type}),
     });
 
     if (res.status === 409) { alert('A run is already in progress.'); return; }
@@ -271,7 +283,7 @@
     const defs = [
       {key:'seen',     label:'Seen'},
       {key:'skipped',  label:'Skipped'},
-      {key:'queued',   label:'PDFs Queued'},
+      {key:'queued',   label:'Files Queued'},
       {key:'batches',  label:'Batches'},
       {key:'uploaded', label:'Uploaded'},
       {key:'errors',   label:'Errors'},

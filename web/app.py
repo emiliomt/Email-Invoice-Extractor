@@ -25,11 +25,14 @@ async def dashboard() -> str:
 class RunRequest(BaseModel):
     folder: str = "INBOX"
     dry_run: bool = False
+    file_type: str = "pdf"
 
 
 @app.post("/run")
 async def start_run(req: RunRequest):
-    started = runner.start_run(req.folder, req.dry_run)
+    if req.file_type not in ("pdf", "xml", "both"):
+        return JSONResponse({"error": "file_type must be 'pdf', 'xml', or 'both'"}, status_code=422)
+    started = runner.start_run(req.folder, req.dry_run, req.file_type)
     if not started:
         return JSONResponse({"error": "A run is already in progress"}, status_code=409)
     return {"started": True}

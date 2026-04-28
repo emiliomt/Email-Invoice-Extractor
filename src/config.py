@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     aws_endpoint_url: str = Field("")
 
     # App behaviour
+    file_type: str = Field("pdf")  # "pdf", "xml", or "both"
     state_file_path: str = Field("./processed_emails.json")
     # Optional: store state in S3 instead of local disk (required on stateless hosts
     # like Render free tier).  Set to an S3 key, e.g. "state/processed_emails.json"

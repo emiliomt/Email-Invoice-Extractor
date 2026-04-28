@@ -55,7 +55,7 @@ def get_state() -> RunState:
     return _state
 
 
-def start_run(folder: str, dry_run: bool) -> bool:
+def start_run(folder: str, dry_run: bool, file_type: str = "pdf") -> bool:
     """
     Launch an extraction run in a background thread.
     Returns False if a run is already in progress.
@@ -69,12 +69,12 @@ def start_run(folder: str, dry_run: bool) -> bool:
         _state.started_at = datetime.now(timezone.utc).isoformat()
         _state.finished_at = None
 
-    thread = threading.Thread(target=_run, args=(folder, dry_run), daemon=True)
+    thread = threading.Thread(target=_run, args=(folder, dry_run, file_type), daemon=True)
     thread.start()
     return True
 
 
-def _run(folder: str, dry_run: bool) -> None:
+def _run(folder: str, dry_run: bool, file_type: str = "pdf") -> None:
     import traceback
 
     handler = _LogCapture(_state.logs)
@@ -87,7 +87,7 @@ def _run(folder: str, dry_run: bool) -> None:
 
     try:
         from src.extractor import run_extraction
-        stats = run_extraction(folder=folder, dry_run=dry_run)
+        stats = run_extraction(folder=folder, dry_run=dry_run, file_type=file_type)
         _state.stats = stats
     except Exception as exc:
         logging.getLogger("runner").error(

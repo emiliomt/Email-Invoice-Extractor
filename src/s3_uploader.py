@@ -10,19 +10,19 @@ from botocore.exceptions import ClientError
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from .config import settings
-from .pdf_extractor import PDFAttachment
+from .pdf_extractor import Attachment
 
 logger = logging.getLogger(__name__)
 
 
 class S3Uploader:
     """
-    Uploads batches of PDFAttachment objects to S3 as ZIP archives.
+    Uploads batches of Attachment objects to S3 as ZIP archives.
 
-    Each ZIP contains up to 50 PDFs.  S3 key format:
+    Each ZIP contains up to 50 files.  S3 key format:
         {prefix}/batch_{YYYYMMDDTHHMMSS}_{batch_number:04d}.zip
 
-    Inside the ZIP each PDF is stored as:
+    Inside the ZIP each file is stored as:
         {sha256(message_id)[:12]}_{safe_filename}
     so filenames are unique even when multiple emails carry identically
     named attachments.
@@ -47,7 +47,7 @@ class S3Uploader:
         return f"{self.prefix}/batch_{self._run_ts}_{batch_number:04d}.zip"
 
     @staticmethod
-    def _arcname(attachment: PDFAttachment, message_id: str) -> str:
+    def _arcname(attachment: Attachment, message_id: str) -> str:
         """Unique filename to use inside the ZIP archive."""
         id_hash = hashlib.sha256(message_id.encode()).hexdigest()[:12]
         safe_name = (
@@ -65,21 +65,21 @@ class S3Uploader:
     )
     def upload_zip_batch(
         self,
-        items: List[Tuple[PDFAttachment, str]],
+        items: List[Tuple[Attachment, str]],
         batch_number: int,
         dry_run: bool = False,
     ) -> str:
         """
-        Zip up to BATCH_SIZE (50) PDFs in memory and upload the archive to S3.
+        Zip up to BATCH_SIZE (50) files in memory and upload the archive to S3.
 
-        items   – list of (PDFAttachment, message_id) pairs
+        items   – list of (Attachment, message_id) pairs
         Returns the S3 key of the uploaded ZIP.
         """
         key = self._zip_key(batch_number)
 
         if dry_run:
             logger.info(
-                "[DRY RUN] Would upload batch %d (%d PDFs) → s3://%s/%s",
+                "[DRY RUN] Would upload batch %d (%d files) → s3://%s/%s",
                 batch_number,
                 len(items),
                 self.bucket,
@@ -95,7 +95,7 @@ class S3Uploader:
 
         zip_bytes = buf.getvalue()
         logger.info(
-            "Uploading batch %d (%d PDFs, %d bytes) → s3://%s/%s",
+            "Uploading batch %d (%d files, %d bytes) → s3://%s/%s",
             batch_number,
             len(items),
             len(zip_bytes),
@@ -108,7 +108,7 @@ class S3Uploader:
             Body=zip_bytes,
             ContentType="application/zip",
             Metadata={
-                "pdf-count": str(len(items)),
+                "file-count": str(len(items)),
                 "batch-number": str(batch_number),
                 "upload-timestamp": datetime.now(timezone.utc).isoformat(),
             },

@@ -4,32 +4,38 @@ from typing import Dict
 logger = logging.getLogger(__name__)
 
 
-def run_extraction(folder: str = "INBOX", dry_run: bool = False) -> Dict[str, int]:
+def run_extraction(
+    folder: str = "INBOX", dry_run: bool = False, file_type: str = "pdf"
+) -> Dict[str, int]:
     """
-    Run the full PDF extraction pipeline.
+    Run the full attachment extraction pipeline.
 
-    Phase 1 — IMAP: scan all unprocessed emails, collect PDF attachments.
-    Phase 2 — S3:   upload PDFs in batches of 50 as ZIP archives.
+    Phase 1 — IMAP: scan all unprocessed emails, collect attachments.
+    Phase 2 — S3:   upload files in batches of 50 as ZIP archives.
+
+    file_type: "pdf", "xml", or "both" — controls which attachment types are extracted.
 
     Returns a stats dict with keys:
         seen, skipped, queued, batches, uploaded, errors
     """
     from .config import settings
     from .imap_client import IMAPEmailClient
-    from .pdf_extractor import extract_pdf_attachments
+    from .pdf_extractor import extract_attachments
     from .s3_uploader import S3Uploader
     from .state_tracker import create_tracker
 
     tracker = create_tracker(settings)
     uploader = S3Uploader()
 
-    pdf_queue = []          # list of (PDFAttachment, message_id)
-    message_pdf_counts = {} # message_id -> number of PDFs queued from that message
+    attachment_queue = []          # list of (Attachment, message_id)
+    message_att_counts = {}        # message_id -> number of attachments queued
     stats = {"seen": 0, "skipped": 0, "queued": 0, "batches": 0, "uploaded": 0, "errors": 0}
-    _no_pdf_samples_logged = 0   # log MIME structure for first 20 no-PDF emails
+    _no_att_samples_logged = 0     # log MIME structure for first 20 empty emails
+
+    logger.info("Extracting file type: %s", file_type)
 
     # ------------------------------------------------------------------ #
-    # Phase 1: collect PDFs from all unprocessed emails                   #
+    # Phase 1: collect attachments from all unprocessed emails             #
     # ------------------------------------------------------------------ #
     with IMAPEmailClient() as imap:
         imap.select_folder(folder)
@@ -43,14 +49,11 @@ def run_extraction(folder: str = "INBOX", dry_run: bool = False) -> Dict[str, in
                 continue
 
             try:
-                attachments = extract_pdf_attachments(msg)
+                attachments = extract_attachments(msg, file_type=file_type)
 
                 if not attachments:
-                    if _no_pdf_samples_logged < 20:
-                        _no_pdf_samples_logged += 1
-                        # Log MIME structure so we can diagnose why PDFs are missed.
-                        # extract_pdf_attachments already built the summary; re-fetch via
-                        # a lightweight walk here to avoid a second decode pass.
+                    if _no_att_samples_logged < 20:
+                        _no_att_samples_logged += 1
                         parts_info = []
                         for p in msg.walk():
                             if p.get_content_maintype() == "multipart":
@@ -58,32 +61,32 @@ def run_extraction(folder: str = "INBOX", dry_run: bool = False) -> Dict[str, in
                             fn = p.get_filename() or "-"
                             parts_info.append(f"{p.get_content_type()}[fn={fn}]")
                         logger.info(
-                            "DIAG no-pdf #%d uid=%d parts: %s",
-                            _no_pdf_samples_logged, uid,
+                            "DIAG no-attachment #%d uid=%d parts: %s",
+                            _no_att_samples_logged, uid,
                             " | ".join(parts_info) or "(empty)",
                         )
                     else:
-                        logger.debug("No PDF attachments in %s", message_id)
+                        logger.debug("No %s attachments in %s", file_type, message_id)
                     if not dry_run:
                         tracker.mark_processed(message_id)
                     continue
 
                 for att in attachments:
-                    pdf_queue.append((att, message_id))
+                    attachment_queue.append((att, message_id))
                     stats["queued"] += 1
 
-                message_pdf_counts[message_id] = len(attachments)
+                message_att_counts[message_id] = len(attachments)
 
             except Exception as exc:
                 logger.error("Error processing UID %d (%s): %s", uid, message_id, exc)
                 stats["errors"] += 1
 
     logger.info(
-        "Phase 1 complete — seen=%d  skipped=%d  queued=%d PDFs from %d messages",
-        stats["seen"], stats["skipped"], stats["queued"], len(message_pdf_counts),
+        "Phase 1 complete — seen=%d  skipped=%d  queued=%d files from %d messages",
+        stats["seen"], stats["skipped"], stats["queued"], len(message_att_counts),
     )
 
-    if not pdf_queue:
+    if not attachment_queue:
         logger.info("Nothing to upload.")
         return stats
 
@@ -93,21 +96,21 @@ def run_extraction(folder: str = "INBOX", dry_run: bool = False) -> Dict[str, in
     batch_size = S3Uploader.BATCH_SIZE
     uploaded_counts: Dict[str, int] = {}
 
-    for batch_number, start in enumerate(range(0, len(pdf_queue), batch_size), start=1):
-        batch = pdf_queue[start : start + batch_size]
+    for batch_number, start in enumerate(range(0, len(attachment_queue), batch_size), start=1):
+        batch = attachment_queue[start : start + batch_size]
         try:
             key = uploader.upload_zip_batch(batch, batch_number, dry_run=dry_run)
             stats["batches"] += 1
             stats["uploaded"] += len(batch)
             logger.info(
-                "Batch %d uploaded (%d PDFs) → s3://%s/%s",
+                "Batch %d uploaded (%d files) → s3://%s/%s",
                 batch_number, len(batch), uploader.bucket, key,
             )
 
             if not dry_run:
                 for _att, message_id in batch:
                     uploaded_counts[message_id] = uploaded_counts.get(message_id, 0) + 1
-                for message_id, total in message_pdf_counts.items():
+                for message_id, total in message_att_counts.items():
                     if uploaded_counts.get(message_id, 0) >= total:
                         tracker.mark_processed(message_id)
 
